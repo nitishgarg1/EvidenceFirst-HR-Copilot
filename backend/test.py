@@ -1,7 +1,7 @@
-from app.core.config import get_settings
+from app.services.ingestion import load_file,chunk_documents
+from pathlib import Path
 
+docs=load_file(Path("data/sample_kb/company_hr_handbook.md"))
 
-setting =get_settings()
-
-
-print(f"{setting.app_name}")
+chunks=chunk_documents(docs)
+print(chunks)
