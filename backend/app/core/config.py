@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     gemini_api_key: str = ""
     pinecone_api_key: str = ""
+    cors_origins: str = "http://localhost:5173"
     pinecone_index_name: str = "fde-hr-policy-rag"
     pinecone_namespace: str = "company-hr-kb"
     huggingfacehub_api_token:str=""
