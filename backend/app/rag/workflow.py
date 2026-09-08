@@ -1,4 +1,4 @@
-import logging
+
 from typing import Literal
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_tavily import TavilySearch
@@ -7,7 +7,7 @@ from app.core.config import get_settings
 from app.rag.state import AgentState, RouteDecision, EvidenceGrade
 from app.rag.vectorstore import get_retriever
 
-logger = logging.getLogger(__name__)
+
 settings = get_settings()
 
 
@@ -19,12 +19,13 @@ def llm():
     global _llm
     if _llm is None:
         if not settings.gemini_api_key:
-            raise RuntimeError("gemini_api_key is missing")
+            raise RuntimeError("GEMINI_API_KEY is missing")
         _llm = ChatGoogleGenerativeAI(
-                model="gemini-3.1-flash-lite",
-         )
+            model=getattr(settings, "gemini_model", "gemini-3.1-flash-lite"),
+            google_api_key=settings.gemini_api_key,
+            temperature=0,
+        )
     return _llm
-
 
 
 def web_search_tool():
@@ -42,9 +43,24 @@ def web_search_tool():
     return _web_search
 
 
+def text_of(message) -> str:
+    """Return plain text from an LLM reply, whether content is a string or a list of blocks."""
+    content = message.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "".join(parts)
+    return str(content)
+
+
 def add_trace(state: AgentState, message: str):
     return [*state.get("trace", []), message]
-
 
 
 def route_question(state: AgentState):
@@ -60,10 +76,8 @@ Return valid JSON like {{"route":"kb"}}.
     return {"source_used": decision.route, "trace": add_trace(state, f"Router → {decision.route.upper()}")}
 
 
-
 def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answer"]:
     return "retrieve_kb" if state["source_used"] == "kb" else "direct_answer"
-
 
 
 def retrieve_kb(state: AgentState):
@@ -84,10 +98,8 @@ Otherwise return weak. JSON: {{"grade":"good"}} or {{"grade":"weak"}}.
     return {"kb_grade": grade.grade, "trace": add_trace(state, f"KB evidence grade → {grade.grade.upper()}")}
 
 
-
 def after_kb(state: AgentState) -> Literal["generate_from_kb", "search_web"]:
     return "generate_from_kb" if state["kb_grade"] == "good" else "search_web"
-
 
 
 def search_web(state: AgentState):
@@ -110,7 +122,6 @@ def search_web(state: AgentState):
     }
 
 
-
 def grade_web(state: AgentState):
     grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
     grade = grader.invoke(f"""
@@ -122,7 +133,6 @@ Return valid JSON like {{"grade":"good"}}.
     return {"web_grade": grade.grade, "trace": add_trace(state, f"Web evidence grade → {grade.grade.upper()}")}
 
 
-
 def after_web(state: AgentState) -> Literal["generate_from_web", "rewrite_query", "insufficient"]:
     if state["web_grade"] == "good":
         return "generate_from_web"
@@ -131,14 +141,12 @@ def after_web(state: AgentState) -> Literal["generate_from_web", "rewrite_query"
     return "insufficient"
 
 
-
-
 def rewrite_query(state: AgentState):
-    rewritten = llm().invoke(f"""
+    rewritten = text_of(llm().invoke(f"""
 Rewrite this HR/employee-support question for better private knowledge retrieval and public web search.
 Preserve intent, add useful HR/policy keywords, do not answer, return only the query.
 Question: {state['question']}
-""").content.strip()
+""")).strip()
     return {
         "current_query": rewritten,
         "retry_count": state["retry_count"] + 1,
@@ -146,42 +154,36 @@ Question: {state['question']}
     }
 
 
-
 def generate_from_kb(state: AgentState):
     context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
-    answer = llm().invoke(f"""
+    answer = text_of(llm().invoke(f"""
 You are an enterprise HR policy and employee support copilot. Answer ONLY from the private company HR KB below.
 Be concise, practical, respectful, and policy-grounded. If steps are present, present them clearly.
 Do not invent policy details. Mention that the answer is based on the company's private knowledge base.
 Question: {state['question']}\n\nPrivate KB:\n{context}
-""").content
+"""))
     citations = []
-    seen = set()
-    for d in state["kb_docs"]:
-        src = d.metadata.get("source", "Private KB")
-        if src not in seen:
-            seen.add(src)
-            citations.append({"title": src.split("/")[-1], "url": "", "type": "private_kb"})
-    return {"answer": answer, "source_used": "private_kb", "citations": citations, "trace": add_trace(state, "Answer generation → PRIVATE KB")}
-
+    # seen = set()
+    # for d in state["kb_docs"]:
+    #     src = d.metadata.get("source", "Private KB")
+    #     if src not in seen:
+    #         seen.add(src)
+    #         citations.append({"title": src.split("/")[-1], "url": "", "type": "private_kb"})
+    return {"answer": answer, "source_used": "private_kb", "citations": [], "trace": add_trace(state, "Answer generation → PRIVATE KB")}
 
 
 def generate_from_web(state: AgentState):
-    answer = llm().invoke(f"""
+    answer = text_of(llm().invoke(f"""
 You are an enterprise HR policy and employee support copilot. The private company HR KB was insufficient.
 Answer ONLY from the web evidence below. Clearly say this is external public information and may require HR validation before being treated as company policy or employment guidance.
 Question: {state['question']}\n\nWeb evidence:\n{state['web_results']}
-""").content
+"""))
     return {"answer": answer, "source_used": "web_search", "trace": add_trace(state, "Answer generation → WEB SEARCH")}
 
 
-
 def direct_answer(state: AgentState):
-    answer = llm().invoke(f"Respond briefly and naturally to: {state['question']}").content
+    answer = text_of(llm().invoke(f"Respond briefly and naturally to: {state['question']}"))
     return {"answer": answer, "source_used": "direct", "trace": add_trace(state, "Direct response → no retrieval")}
-
-
-
 
 
 def insufficient(state: AgentState):
@@ -190,7 +192,6 @@ def insufficient(state: AgentState):
         "source_used": "insufficient_evidence",
         "trace": add_trace(state, "Stopped → insufficient reliable evidence"),
     }
-
 
 
 def build_graph():
@@ -229,7 +230,6 @@ def build_graph():
 
 
 agent_graph = build_graph()
-
 
 
 def ask(question: str):
