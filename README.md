@@ -4,7 +4,7 @@ An agentic RAG assistant for HR policy and employee support. It answers from the
 
 **Live demo:** https://evidencefirst-hr-copilot.onrender.com
 
->> **Note:** This project is deployed on Render's free tier. The backend may go to sleep after a period of inactivity. When you open the application for the first time or after inactivity, please wait up to **2 minutes** for the backend to spin up. The first response may take longer than usual.
+>> **Note:** This project is deployed on Render's free tier. The backend may go to sleep after a period of inactivity. When you open the application for the first time , please wait up to **2 minutes** for the backend to spin up. The first response may take longer than usual.
 
 ---
 
